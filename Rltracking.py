@@ -142,8 +142,15 @@ class ReinforcedTracking(object):
         #self.start_point = np.array(start_point)
         self.maxlen = maxlen
         self.grouping_size = grouping_size
-        self.seed = self.start_points[0]
+        if len(self.start_points.shape) == 1:
+            self.seed = self.start_points
+        else:
+            self.seed = self.start_points[0]
         self.goal_points = np.array(goal_points)
+        if len(self.goal_points.shape) == 1:
+            self.goal_point = self.goal_points
+        else:
+            self.goal_point = self.goal_points[0]
         #self.goal_point = np.array(goal_point)
         self.resolution = resolution
         self.step_size = step_size
@@ -158,6 +165,15 @@ class ReinforcedTracking(object):
         self.graph = np.array(self.seed)
         self.value = [0.0]
         self.streamlines = []
+        streamlines_onetrack,seed_onetrack = self.return_streamline()
+        #self.streamlines.append(streamlines_onetrack)
+        one_seed_node_graph = Seed_node_graph(self.graph, self.value)
+        self.seeds_nodes_graph.append(one_seed_node_graph)
+        non_zero = np.where(self.tissue_classifier !=0 )
+        n = np.array(non_zero)
+        self.n = np.transpose(n)
+        self.seeds = []
+        self.seeds_nodes_total = []
 
 
     def td_learning(self, onetrack1):
@@ -256,11 +272,13 @@ class ReinforcedTracking(object):
         #starting_point = np.array([53,65,40])
         #starting_point = np.array([42,55,20])
         #goal_point = goal_point[None,:]
-        #point_actor2 = fvtk.point(self.start_point[None,:],colors2, point_radius=self.start_radius)
-        #point_actor1 = fvtk.point(self.goal_point[None,:],colors1, point_radius=self.goal_radius)
-        #r.add(point_actor1)
+        #point_actor2 = fvtk.point(self.seed[None,:],colors2, point_radius=0.5)#point_radius=self.start_radius)
+        point_actor2 = fvtk.point(self.start_points,colors2, point_radius=0.5)
+        #point_actor1 = fvtk.point(self.goal_points[None,:],colors1, point_radius=self.goal_radius)
+        point_actor1 = fvtk.point(self.goal_points,colors1, point_radius=0.5)
+        r.add(point_actor1)
         #r.AddActor(point_actor1)
-        #r.add(point_actor2)
+        r.add(point_actor2)
         #r.AddActor(point_actor2)
 
         #def time_event(obj, ev):
@@ -306,8 +324,9 @@ class ReinforcedTracking(object):
             #iren.GetRenderWindow().Render()
         if not show_final:
             window.show(r)
-        peak_slicer = actor.line(streamlines_sub)
-        r.add(peak_slicer)
+        peak_slicer = actor.line(self.streamlines)
+        if not len(self.streamlines) == 0:
+            r.add(peak_slicer)
         if show_final:
             window.show(r)
 
@@ -366,10 +385,12 @@ class ReinforcedTracking(object):
             for i in range(5):
                 dir_sub = self.direction_getter[t0, t1, t2, i,:]
                 if dir_sub.all() == True:
-                    if np.dot(dir_old,dir_sub)<0.5:
+                    if np.dot(dir_old,dir_sub)<0.6:
                             #dir_sub = -dir_sub
-                            continue
+                        continue
                     value_single_test = self.find_track_point(dir_sub, track_point)
+                    #if value_single_test < self.reward_negative/25:
+                    #    continue
                     decision1 = 1
                     if value_single_test > value_single:
                         index_inside = i
@@ -381,10 +402,12 @@ class ReinforcedTracking(object):
             for i in range(5):
                 dir_sub = -self.direction_getter[t0, t1, t2, i,:]
                 if dir_sub.all() == True:
-                    if np.dot(dir_old,dir_sub)<0.5:
+                    if np.dot(dir_old,dir_sub)<0.6:
                             #dir_sub = -dir_sub
-                            continue
+                        continue
                     value_single_test = self.find_track_point(dir_sub, track_point)
+                    #if value_single_test < self.reward_negative/25:
+                    #    continue
                     decision2 = 1
                     if value_single_test > value_single:
                         index_inside = i
@@ -433,12 +456,19 @@ class ReinforcedTracking(object):
             dir_sub = self.direction_getter[t0, t1, t2, 0,:]
             #if dir_sub.all() == False:
             #    t0, t1, t2 = self.check_direction(t0,t1,t2)
+        """
         if len(seed_onetrack.nodes1.shape) == 1:
             norm3_track1 = norm(seed_onetrack.nodes1 - self.goal_point)
         else:
             norm3_track1 = norm(seed_onetrack.nodes1 - self.goal_point,axis=1,ord=2)
+        """
+        if len(streamline.shape) == 1:
+            norm3_track1 = norm(streamline - self.goal_point)
+        else:
+            norm3_track1 = norm(streamline - self.goal_point,axis=1,ord=2)
         if norm3_track1.min()<self.goal_radius:
             self.positive=True
+            self.streamlines.append(streamline)
         else:
             self.positive=False
         if seed_onetrack.track1.shape[0] > self.maxlen:
@@ -452,42 +482,83 @@ class ReinforcedTracking(object):
         #non_zero = np.where(self.tissue_classifier !=0 )
         #n = np.array(non_zero)
         #n = np.transpose(n)
-        """Generate an initial graph
-        """
-        self.goal_point = self.goal_points[0]
-        streamlines_onetrack,seed_onetrack = self.return_streamline()
-        self.streamlines.append(streamlines_onetrack)
-        one_seed_node_graph = Seed_node_graph(self.graph, self.value)
-        self.seeds_nodes_graph.append(one_seed_node_graph)
+        #self.goal_point = self.goal_points[0]
+        #self.seeds = []
+        if len(self.start_points.shape) == 1:
+            self.seeds = []
+            self.seeds.append(self.start_points)
+            index =  np.argmin(norm(self.n-self.start_points,axis=1,ord=2))
+            self.seeds.append(self.n[index])
+            for j in range(len(self.seeds)):
+            #self.seed = self.start_points
+                self.seed = self.seeds[j]
+                self.goal_point = self.goal_points
+                """
+                for k in range(len(self.streamlines)):
+                    norm_streamline = norm(self.seed-self.streamlines[k][0])
+                    if norm_streamline.min() == 0:
+                        return
+                """
+                if len(self.seed_nodes.shape) == 1:
+                    norm2 = norm(self.seed_nodes-self.seed)
+                if len(self.seed_nodes.shape) != 1:
+                    norm2 = norm(self.seed_nodes-self.seed,axis=1,ord=2)
+                if norm2.min() < self.grouping_size:
+                    index_c = np.argmin(norm2)
+                    self.graph = self.seeds_nodes_graph[index_c].graph
+                    self.value = self.seeds_nodes_graph[index_c].value
+                    streamlines_onetrack, seed_onetrack = self.return_streamline()
+                    self.seeds_nodes_graph[index_c].graph = self.graph
+                    self.seeds_nodes_graph[index_c].value = self.value
+                else:
+                    index_c = self.seed_nodes.shape[0]
+                    self.seed_nodes = np.vstack((self.seed_nodes,self.seed))
+                    self.graph = self.seed
+                    self.value = [0.0]
 
-        for i in range(self.start_points.shape[0]):
-            self.seed = self.start_points[i]
-            self.goal_point = self.goal_points[i]
-            #if norm(self.seed - self.start_point) < self.start_radius:
-            if len(self.seed_nodes.shape) == 1:
-                norm2 = norm(self.seed_nodes-self.seed)
-            if len(self.seed_nodes.shape) != 1:
-                norm2 = norm(self.seed_nodes-self.seed,axis=1,ord=2)
-            if norm2.min() < self.grouping_size:
-                index_c = np.argmin(norm2)
-                self.graph = self.seeds_nodes_graph[index_c].graph
-                self.value = self.seeds_nodes_graph[index_c].value
-                streamlines_onetrack, seed_onetrack = self.return_streamline()
-                self.seeds_nodes_graph[index_c].graph = self.graph
-                self.seeds_nodes_graph[index_c].value = self.value
-            else:
-                index_c = self.seed_nodes.shape[0]
-                self.seed_nodes = np.vstack((self.seed_nodes,self.seed))
-                self.graph = self.seed
-                self.value = [0.0]
+                    streamlines_onetrack, seed_onetrack = self.return_streamline()
+                    one_seed_node_graph = Seed_node_graph(self.graph, self.value)
+                    self.seeds_nodes_graph.append(one_seed_node_graph)
+        else:
+            for i in range(self.start_points.shape[0]):
+                self.seeds = []
+                self.goal_point = self.goal_points[i]
+                self.seeds.append(self.start_points[i])
+                index =  np.argmin(norm(self.n-self.start_points[i],axis=1,ord=2))
+                self.seeds.append(self.n[index])
+                """
+                for k in range(len(self.streamlines)):
+                    norm_streamline = norm(self.seed-self.streamlines[k][0])
+                    if norm_streamline.min() == 0:
+                        continue
+                """
+                for j in range(len(self.seeds)):
+                #if norm(self.seed - self.start_point) < self.start_radius:
+                    self.seed = self.seeds[j]
+                    if len(self.seed_nodes.shape) == 1:
+                        norm2 = norm(self.seed_nodes-self.seed)
+                    if len(self.seed_nodes.shape) != 1:
+                        norm2 = norm(self.seed_nodes-self.seed,axis=1,ord=2)
+                    if norm2.min() < self.grouping_size:
+                        index_c = np.argmin(norm2)
+                        self.graph = self.seeds_nodes_graph[index_c].graph
+                        self.value = self.seeds_nodes_graph[index_c].value
+                        streamlines_onetrack, seed_onetrack = self.return_streamline()
+                        self.seeds_nodes_graph[index_c].graph = self.graph
+                        self.seeds_nodes_graph[index_c].value = self.value
+                    else:
+                        index_c = self.seed_nodes.shape[0]
+                        self.seed_nodes = np.vstack((self.seed_nodes,self.seed))
+                        self.graph = self.seed
+                        self.value = [0.0]
 
-                streamlines_onetrack, seed_onetrack = self.return_streamline()
-                one_seed_node_graph = Seed_node_graph(self.graph, self.value)
-                self.seeds_nodes_graph.append(one_seed_node_graph)
+                        streamlines_onetrack, seed_onetrack = self.return_streamline()
+                        one_seed_node_graph = Seed_node_graph(self.graph, self.value)
+                        self.seeds_nodes_graph.append(one_seed_node_graph)
 
                 #if decision1 == 1:
-                if not streamlines_onetrack == []:
-                    self.streamlines.append(streamlines_onetrack)
+                #if not streamlines_onetrack == []:
+                #    self.streamlines.append(streamlines_onetrack)
 
 
 
@@ -624,26 +695,8 @@ def build_phantom(fname):
     np.save(fname, vol)
 
 
-def show_graph_values(FA, streamlines, seeds_nodes_graph, show_final=True):
+def show_graph_values(rt, bundle, show_final=True):
 
-    #streamlines_actor = actor.line(streamlines)
-    time_count = 0
-    renderwindow = vtk.vtkRenderWindow()
-    renderwindow.SetSize(1000,1000)
-    r = window.Renderer()
-    #r = vtk.vtkRenderer()
-    #r.clear()
-    r.background((1, 1, 1))
-    #r.SetBackground(1,1,1)
-    renderwindow.AddRenderer(r)
-    renderwindowInteractor = vtkRenderWindowInteractor()
-    #r = vtk.vtkRenderWindowInteractor()
-    renderwindowInteractor.SetRenderWindow(renderwindow)
-    camera = vtkCamera()
-    camera.SetPosition(-50,-50,-50)
-    camera.SetFocalPoint(0,0,0)
-    #r.SetActiveCamera(camera)
-    streamlines_sub = []
     #r.add(streamlines_actor)
     #actor_slicer = actor.slicer(FA, interpolation='nearest')
     #r.add(actor_slicer)
@@ -659,12 +712,12 @@ def show_graph_values(FA, streamlines, seeds_nodes_graph, show_final=True):
     starting_point = np.array([53,65,40])
     #starting_point = np.array([42,55,20])
     goal_point = goal_point[None,:]
-    point_actor2 = fvtk.point(goal_point,colors2, point_radius=2)
-    point_actor1 = fvtk.point(starting_point[None,:],colors1, point_radius=0.7)
-    r.add(point_actor1)
+    #r.add(point_actor1)
     #r.AddActor(point_actor1)
-    r.add(point_actor2)
+    #r.add(point_actor2)
     #r.AddActor(point_actor2)
+    r = window.Renderer()
+    r.add(actor.line(bundle))
 
     #def time_event(obj, ev):
         #time.sleep(20)
@@ -676,40 +729,40 @@ def show_graph_values(FA, streamlines, seeds_nodes_graph, show_final=True):
             #colors = np.random.rand(1,3)
             colors = np.array((1,1,1))
             if np.array(rt.seeds_nodes_graph[i].value) > 0:
-                colors = np.array((1,1 - rt.seeds_nodes_graph[i].value[0]/100,1 - seeds_nodes_graph[i].value[0]/100))
+                colors = np.array((1,1 - rt.seeds_nodes_graph[i].value[0]/100,1 - rt.seeds_nodes_graph[i].value[0]/100))
 
         else:
-            max_value = np.abs(seeds_nodes_graph[i].value.max())
-            ss = np.where(seeds_nodes_graph[i].value<0)[0]
-            colors = np.ones((seeds_nodes_graph[i].graph.shape[0],3))
+            max_value = np.abs(rt.seeds_nodes_graph[i].value.max())
+            ss = np.where(rt.seeds_nodes_graph[i].value<0)[0]
+            colors = np.ones((rt.seeds_nodes_graph[i].graph.shape[0],3))
             #colors[:,2] = 1 - seeds_nodes_graph[i].value/max_value
             #colors[:,1] = 1 - seeds_nodes_graph[i].value/max_value
             colors[ss,2] = 1
             colors[ss,1] = 1
 
-            sss = np.where(seeds_nodes_graph[i].value>0)[0]
+            sss = np.where(rt.seeds_nodes_graph[i].value>0)[0]
             colors[sss,1] = 0
             colors[sss,2] = 0
 
-            if seeds_nodes_graph[i].value.max()>0:
+            #if rt.seeds_nodes_graph[i].value.max()>0:
                 #colors = np.zeros((seeds_nodes_graph[i].graph.shape[0],3))
                 #colors[:,0] = 1
-                streamlines_sub.append(seeds_nodes_graph[i].graph)
+                #streamlines_sub.append(rt.seeds_nodes_graph[i].graph)
 
 
 
-        if len(seeds_nodes_graph[i].graph.shape) == 1:
-            point_actor = fvtk.point(seeds_nodes_graph[i].graph[None,:],colors, point_radius=0.3)
+        if len(rt.seeds_nodes_graph[i].graph.shape) == 1:
+            point_actor = fvtk.point(rt.seeds_nodes_graph[i].graph[None,:],colors, point_radius=0.3)
         else:
-            point_actor = fvtk.point(seeds_nodes_graph[i].graph,colors, point_radius=0.3)
-        #r.add(point_actor)
+            point_actor = fvtk.point(rt.seeds_nodes_graph[i].graph,colors, point_radius=0.3)
+        r.add(point_actor)
         #r.AddActor(point_actor)
         #iren = obj
         #iren.GetRenderWindow().Render()
     if not show_final:
         window.show(r)
-    peak_slicer = actor.line(streamlines_sub)
-    r.add(peak_slicer)
+    #peak_slicer = actor.line(streamlines_sub)
+    #r.add(peak_slicer)
     if show_final:
         window.show(r)
         #renderwindow.Render()

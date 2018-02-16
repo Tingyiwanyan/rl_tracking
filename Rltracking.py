@@ -79,7 +79,8 @@ class ReinforcedTracking(object):
                  goal_points, start_radius=3, goal_radius=2,resolution=1,
                  step_size=1, reward_positive=10000, reward_negative=-100,
                  positive=True, alfa=0.2, gamma=0.8,max_cross=None, maxlen=100,
-                 fixedstep=True, return_all=True, grouping_size=1):
+                 fixedstep=True, return_all=True, grouping_size=1,direc=True,
+                 angles=0.5):
         """Creates streamlines by using reinforcement learning and expanding
            graph.
 
@@ -139,6 +140,8 @@ class ReinforcedTracking(object):
         self.start_radius = start_radius
         self.goal_radius = goal_radius
         self.start_points = np.array(start_points)
+        self.direc = direc
+        self.angles = angles
         #self.start_point = np.array(start_point)
         self.maxlen = maxlen
         self.grouping_size = grouping_size
@@ -237,7 +240,7 @@ class ReinforcedTracking(object):
                         return t0,t1,t2
         return -1,-1,-1
 
-    def show_graph_values(self, show_final=True,show_node=True):
+    def show_graph_values(self, show_final=True,show_node=True,show_start=True):
 
         #streamlines_actor = actor.line(streamlines)
         time_count = 0
@@ -276,9 +279,10 @@ class ReinforcedTracking(object):
         point_actor2 = fvtk.point(self.start_points,colors2, point_radius=0.5)
         #point_actor1 = fvtk.point(self.goal_points[None,:],colors1, point_radius=self.goal_radius)
         point_actor1 = fvtk.point(self.goal_points,colors1, point_radius=0.5)
-        r.add(point_actor1)
+        if show_start:
+            r.add(point_actor1)
         #r.AddActor(point_actor1)
-        r.add(point_actor2)
+            r.add(point_actor2)
         #r.AddActor(point_actor2)
 
         #def time_event(obj, ev):
@@ -335,6 +339,7 @@ class ReinforcedTracking(object):
         """
         decision1 = 0
         decision2 = 0
+        decision = 0
         streamline = self.seed
         track_point = self.seed
         node_onetrack = []
@@ -368,7 +373,10 @@ class ReinforcedTracking(object):
             return t0, t1, t2
 
         t0,t1,t2 = itp(track_point)
-        dir_old = -self.direction_getter[t0, t1, t2, 0,:]
+        if self.direc == True:
+            dir_old = -self.direction_getter[t0, t1, t2, 0,:]
+        if self.direc == False:
+            dir_old = self.direction_getter[t0, t1, t2, 0,:]
         while(self.tissue_classifier[t0,t1,t2] != 0 ):
             decision1 = 0
             decision2 = 0
@@ -385,7 +393,7 @@ class ReinforcedTracking(object):
             for i in range(5):
                 dir_sub = self.direction_getter[t0, t1, t2, i,:]
                 if dir_sub.all() == True:
-                    if np.dot(dir_old,dir_sub)<0.6:
+                    if np.dot(dir_old,dir_sub)<self.angles:
                             #dir_sub = -dir_sub
                         continue
                     value_single_test = self.find_track_point(dir_sub, track_point)
@@ -402,7 +410,7 @@ class ReinforcedTracking(object):
             for i in range(5):
                 dir_sub = -self.direction_getter[t0, t1, t2, i,:]
                 if dir_sub.all() == True:
-                    if np.dot(dir_old,dir_sub)<0.6:
+                    if np.dot(dir_old,dir_sub)<self.angles:
                             #dir_sub = -dir_sub
                         continue
                     value_single_test = self.find_track_point(dir_sub, track_point)
@@ -463,17 +471,23 @@ class ReinforcedTracking(object):
             norm3_track1 = norm(seed_onetrack.nodes1 - self.goal_point,axis=1,ord=2)
         """
         if len(streamline.shape) == 1:
-            norm3_track1 = norm(streamline - self.goal_point)
+            norm3_track1 = norm(streamline - self.goal_points)
         else:
-            norm3_track1 = norm(streamline - self.goal_point,axis=1,ord=2)
-        if norm3_track1.min()<self.goal_radius:
-            self.positive=True
-            self.streamlines.append(streamline)
-        else:
-            self.positive=False
-        if seed_onetrack.track1.shape[0] > self.maxlen:
-            self.positive = False
-        self.td_learning(seed_onetrack.track1)
+            for i in range(streamline.shape[0]):
+                norm3_track1 = norm(streamline[i] - self.goal_points,axis=1,ord=2)
+                if norm3_track1.min()<self.goal_radius:
+                    self.positive=True
+                    #self.streamlines.append(streamline)
+                    decision = 1
+                    break
+            if decision == 0:
+                self.positive=False
+            if seed_onetrack.track1.shape[0] > self.maxlen:
+            #if streamline.shape[0] > self.maxlen:
+                self.positive = False
+            if self.positive == True:
+                self.streamlines.append(streamline)
+            self.td_learning(seed_onetrack.track1)
         return streamline, seed_onetrack
 
     def generate_streamlines(self):
@@ -522,7 +536,7 @@ class ReinforcedTracking(object):
         else:
             for i in range(self.start_points.shape[0]):
                 self.seeds = []
-                self.goal_point = self.goal_points[i]
+                #self.goal_point = self.goal_points[i]
                 self.seeds.append(self.start_points[i])
                 index =  np.argmin(norm(self.n-self.start_points[i],axis=1,ord=2))
                 self.seeds.append(self.n[index])

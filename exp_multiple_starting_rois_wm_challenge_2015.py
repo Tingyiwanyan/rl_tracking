@@ -12,9 +12,10 @@ from dipy.reconst.shm import CsaOdfModel
 from dipy.data import get_sphere
 from dipy.direction.peaks import peaks_from_model
 from dipy.tracking.streamline import transform_streamlines
+from dipy.tracking.utils import seeds_from_mask
 
 #dname = '/home/elef/Dropbox/Tingyi/2015_Challenge/'
-dname = 'C:\\Users\Tingyi\\Dropbox\\Tingyi\\2015_Challenge\\'
+dname = 'C:\\Users\\Tingyi\\Dropbox\\Tingyi\\2015_Challenge\\'
 
 dname_dwi = join(dname, 'ISMRM_2015_Tracto_challenge_ground_truth_dwi_v2')
 
@@ -300,57 +301,203 @@ def get_specific_bundle(bundle_name='UF_right'):
 
     head, head_affine = load_nifti(head_fname)
 
+    tail_fname = join(dname_rois, base + '_tail.nii.gz')
+
+    tail, tail_affine = load_nifti(tail_fname)
+
+    iaffine_head = np.linalg.inv(head_affine)
+    iaffine_tail = np.linalg.inv(tail_affine)
+
+    #starts = seeds_from_mask(head, affine=iaffine_head, density=2)
+
+    starts = seeds_from_mask(head, density=2)
+
+    #ends = seeds_from_mask(tail, affine=iaffine_tail, density=2)
+
+    ends = seeds_from_mask(tail, density=2)
     #streamlines2 = transform_streamlines(streamlines,
     #                                     np.linalg.inv(trk_affine))
 
     print(trk_affine)
     print(head_affine)
-    return streamlines, head, head_affine, trk_affine
+    return streamlines, head, head_affine, trk_affine, starts, ends
 
 
 #show_sim_data_with_starts_ends()
-
-bundle, head, head_affine, trk_affine = get_specific_bundle('UF_right')
-
 pam, FA, affine = calculate_peaks()
+
+bundle, head, head_affine, trk_affine, starts, ends = get_specific_bundle('CST_left')
+
+#pam, FA, affine = calculate_peaks()
 
 bundle = transform_streamlines(bundle,
                                np.linalg.inv(affine))
 
+bundle_mask = np.zeros(FA.shape, dtype='i8')
+
+for streamline in bundle:
+    for point in streamline:
+        bundle_mask[tuple(point.astype(int))] = 1
 
 ren = window.Renderer()
 
-ps = actor.peak_slicer(pam.peak_dirs, pam.peak_values, colors=None)
+ps = actor.peak_slicer(pam.peak_dirs, #pam.peak_values,
+                       mask=bundle_mask, colors=None, linewidth=3)
+
+image_actor_z = actor.slicer(bundle_mask)
+image_actor_z.SetInterpolate(False)
+#image.display(z=FA.shape[2]//2)
+
+iaffine = np.linalg.inv(affine)
+#starts = np.dot(iaffine[:3, :3], starts.T)# + iaffine[:3, 3][:, None]
+starts = np.abs(np.dot(starts, iaffine[:3, :3]))
+#ends = np.dot(iaffine[:3, :3], ends.T)# + iaffine[:3, 3][:, None]
+ends = np.abs(np.dot(ends, iaffine[:3, :3]))
+#starts = starts.T
+#ends = ends.T
+"""
+st = actor.point(starts, colors=(0, 1, 1))
+en = actor.point(ends, colors=(0, 1, 0))
+
+
+ps.display_extent(0, FA.shape[0]-1, 0, FA.shape[1]-1,0, FA.shape[2]-1,)
 
 ren.add(ps)
+ren.add(image_actor_z)
+ren.add(st)
+ren.add(en)
+#window.show(ren)
+shape = FA.shape
+slicer_opacity = 1
 
-window.show(ren)
+show_m = window.ShowManager(ren, size=(1200, 900),
+                            title='DIPY 0.14 Developers\' Edition')
+show_m.initialize()
 
-#start = list(bundle[0][0])
-#end = list(bundle[0][-1])
-starts = bundle[0][0]
-ends = bundle[0][-1]
 
-for i in range(len(bundle)-1):
-    starts = np.vstack((starts,bundle[i+1][0]))
-    ends = np.vstack((ends,bundle[i+1][-1]))
+line_slider_z = ui.LineSlider2D(min_value=0,
+                                max_value=shape[2] - 1,
+                                initial_value=shape[2] / 2,
+                                text_template="{value:.0f}",
+                                length=140)
 
-start = np.mean(starts,axis=0)
-end = np.mean(ends,axis=0)
-start_radius = np.mean(np.std(starts,axis=0))
-end_radius = np.mean(np.std(ends,axis=0))
+
+opacity_slider = ui.LineSlider2D(min_value=0.0,
+                                 max_value=1.0,
+                                 initial_value=slicer_opacity,
+                                 length=140)
+
+
+def change_slice_z(i_ren, obj, slider):
+    z = int(np.round(slider.value))
+    image_actor_z.display_extent(0, shape[0] - 1, 0, shape[1] - 1, z, z)
+
+
+
+def change_opacity(i_ren, obj, slider):
+    slicer_opacity = slider.value
+    image_actor_z.opacity(slicer_opacity)
+
+line_slider_z.add_callback(line_slider_z.slider_disk,
+                           "MouseMoveEvent",
+                           change_slice_z)
+opacity_slider.add_callback(opacity_slider.slider_disk,
+                            "MouseMoveEvent",
+                            change_opacity)
+
+
+def build_label(text):
+    label = ui.TextBlock2D()
+    label.message = text
+    label.font_size = 18
+    label.font_family = 'Arial'
+    label.justification = 'left'
+    label.bold = False
+    label.italic = False
+    label.shadow = False
+    label.actor.GetTextProperty().SetBackgroundColor(0, 0, 0)
+    label.actor.GetTextProperty().SetBackgroundOpacity(0.0)
+    label.color = (1, 1, 1)
+
+    return label
+
+
+line_slider_label_z = build_label(text="Z Slice")
+opacity_slider_label = build_label(text="Opacity")
+
+
+panel = ui.Panel2D(center=(1030, 120),
+                   size=(300, 200),
+                   color=(1, 1, 1),
+                   opacity=0.1,
+                   align="right")
+
+panel.add_element(line_slider_label_z, 'relative', (0.1, 0.35))
+panel.add_element(line_slider_z, 'relative', (0.65, 0.4))
+panel.add_element(opacity_slider_label, 'relative', (0.1, 0.15))
+panel.add_element(opacity_slider, 'relative', (0.65, 0.2))
+
+show_m.ren.add(panel)
+
+
+global size
+size = ren.GetSize()
+
+
+def win_callback(obj, event):
+    global size
+    if size != obj.GetSize():
+        size_old = size
+        size = obj.GetSize()
+        size_change = [size[0] - size_old[0], 0]
+        panel.re_align(size_change)
+
+show_m.initialize()
+
+
+interactive = True
+
+ren.zoom(1.5)
+ren.reset_clipping_range()
+
+
+show_m.add_window_callback(win_callback)
+show_m.render()
+show_m.start()
+
+
+1/0
+"""
+# start = list(bundle[0][0])
+# end = list(bundle[0][-1])
+# starts = bundle[0][0]
+# ends = bundle[0][-1]
+
+# for i in range(len(bundle)-1):
+#     starts = np.vstack((starts,bundle[i+1][0]))
+#     ends = np.vstack((ends,bundle[i+1][-1]))
+
+#start = np.mean(starts,axis=0)
+#end = np.mean(ends,axis=0)
+#start_radius = np.mean(np.std(starts,axis=0))
+#end_radius = np.mean(np.std(ends,axis=0))
 
 
 from Rltracking import ReinforcedTracking
 
+#starts = starts[0:100]
+#ends = ends[0:100]
+"""
 rt = ReinforcedTracking(pam.peak_dirs, FA,
-                        start, end, start_radius=3,goal_radius=2)
+                        starts, ends, start_radius=1,goal_radius=2,resolution=0.5,step_size=0.5,grouping_size=0.2)
 
 rt.generate_streamlines()
 
 ren.add(actor.line(bundle))
 window.show(ren)
+"""
 
+"""
 bundle2, head, head_affine, trk_affine = get_specific_bundle('UF_left')
 
 bundle2 = transform_streamlines(bundle2,
@@ -359,10 +506,18 @@ bundle2 = transform_streamlines(bundle2,
 start2 = list(bundle2[0][0])
 end2 = list(bundle2[0][-1])
 
+for i in range(len(bundle2)-1):
+    starts2 = np.vstack((starts2,bundle2[i+1][0]))
+    ends2 = np.vstack((ends2,bundle2[i+1][-1]))
+
 rt2 = ReinforcedTracking(pam.peak_dirs, FA,
-                        start2, end2, start_radius=5, goal_radius=5)
+                        starts2, ends2, start_radius=0.15,goal_radius=0.5,resolution=0.5,step_size=0.5,grouping_size=0.2)
+
+#rt2 = ReinforcedTracking(pam.peak_dirs, FA,
+#                        start2, end2, start_radius=5, goal_radius=5)
 
 rt2.generate_streamlines()
 
 ren.add(actor.line(bundle2))
 window.show(ren)
+"""

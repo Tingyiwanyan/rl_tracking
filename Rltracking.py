@@ -77,13 +77,12 @@ class Seed_node_graph(object):
 class ReinforcedTracking(object):
     def __init__(self, direction_getter, tissue_classifier, start_points,
                  goal_points, start_radius=3, goal_radius=2,resolution=1,
-                 step_size=1, reward_positive=10000, reward_negative=-100,
-                 positive=True, alfa=0.2, gamma=0.8,max_cross=None, maxlen=100,
-                 fixedstep=True, return_all=True, grouping_size=1,direc=True,
-                 angles=0.5):
+                 step_size=1, reward_positive=10000, reward_negative=-200,
+                 positive=True, alfa=0.02, gamma=0.8,max_cross=None, maxlen=100,
+                 minlen=20, fixedstep=True, return_all=True, grouping_size=2,
+                 angles=0.5,exp_range=3,resolution_exp=10):
         """Creates streamlines by using reinforcement learning and expanding
            graph.
-
         Parameters
         ----------
         direction_getter : instance of DirectionGetter
@@ -139,17 +138,24 @@ class ReinforcedTracking(object):
         self.shape2 = tissue_classifier.shape[2]
         self.start_radius = start_radius
         self.goal_radius = goal_radius
+        self.index = 0
+        self.indexs = []
+        self.resolution_exp = resolution_exp
         self.start_points = np.array(start_points)
-        self.direc = direc
+        self.start_points_alter = np.array(start_points)
+        #self.direc = direc
         self.angles = angles
+        self.exp_range = exp_range
         #self.start_point = np.array(start_point)
         self.maxlen = maxlen
+        self.minlen = minlen
         self.grouping_size = grouping_size
         if len(self.start_points.shape) == 1:
             self.seed = self.start_points
         else:
             self.seed = self.start_points[0]
         self.goal_points = np.array(goal_points)
+        self.goal_points_alter = np.array(goal_points)
         if len(self.goal_points.shape) == 1:
             self.goal_point = self.goal_points
         else:
@@ -161,12 +167,18 @@ class ReinforcedTracking(object):
         self.reward_negative = reward_negative
         self.alfa = alfa
         self.gamma = gamma
-        #self.dir_range = 3
+        self.dir_range = 3
         self.positive = positive
         self.seed_nodes = np.array(self.seed)
         self.seeds_nodes_graph = []
         self.graph = np.array(self.seed)
         self.value = [0.0]
+        self.exp_graph_general = np.array(self.seed)
+        self.exp_value_general = np.array([0.0])
+        self.exp_direc_general = np.array([0,0,0])
+        self.exp_graph_alter = self.exp_graph_general
+        self.exp_value_alter = self.exp_value_general
+        self.exp_direc_alter = self.exp_direc_general
         self.streamlines = []
         streamlines_onetrack,seed_onetrack = self.return_streamline()
         #self.streamlines.append(streamlines_onetrack)
@@ -196,6 +208,36 @@ class ReinforcedTracking(object):
             else:
                 # Reinforcement learning (TD)
                 self.value[int(onetrack1[l1-(i+1)])] = self.value[int(onetrack1[l1-(i+1)])] + self.alfa*(self.value[int(onetrack1[l1-i])]-self.value[int(onetrack1[l1-(i+1)])])
+
+    def td_learning_general(self, onetrack1):
+        """ Perform TD learning
+        """
+
+        if self.positive == True:
+            reward = self.reward_positive
+        else:
+            reward = self.reward_negative
+
+        l1 = len(onetrack1)
+        for i in range(l1):
+            #!!!replace with tmp = int(onetrack1[l1 - (i +1)])
+            if i == 0:
+                self.exp_value_alter[int(onetrack1[l1-(i+1)])] = reward
+            else:
+                # Reinforcement learning (TD)
+                self.exp_value_alter[int(onetrack1[l1-(i+1)])] = self.exp_value_alter[int(onetrack1[l1-(i+1)])] + self.alfa*(self.exp_value_alter[int(onetrack1[l1-i])]-self.exp_value_alter[int(onetrack1[l1-(i+1)])])
+
+    def find_track_point_general(self,track_point):
+        track_point_test = track_point
+        if len(self.exp_graph_alter.shape) == 1:
+            norm2 = norm(self.exp_graph_alter-track_point_test)
+        else:
+            norm2 = norm(self.exp_graph_alter-track_point_test,axis=1,ord=2)
+        if norm2.min() < self.resolution:
+            index_t = np.argmin(norm2)
+            return self.exp_direc_alter[index_t]
+        else:
+            return np.array([0,0,0])
 
 
     def find_track_point(self, dirs, track_point):
@@ -240,7 +282,7 @@ class ReinforcedTracking(object):
                         return t0,t1,t2
         return -1,-1,-1
 
-    def show_graph_values(self, show_final=True,show_node=True,show_start=True):
+    def show_graph_values(self, show_final=True,show_node=True,show_start=True,show_node_general=True):
 
         #streamlines_actor = actor.line(streamlines)
         time_count = 0
@@ -287,6 +329,34 @@ class ReinforcedTracking(object):
 
         #def time_event(obj, ev):
             #time.sleep(20)
+        """Alter
+        """
+        if len(self.exp_graph_general.shape) == 1:
+            #colors = np.random.rand(1,3)
+            colors = np.array((1,1,1))
+            if np.array(self.exp_value_general) > 0:
+                colors = np.array((1,1 - self.exp_value_general[0]/100,1 - self.exp_value_general[0]/100))
+
+        else:
+            max_value = np.abs(self.exp_value_general.max())
+            ss = np.where(self.exp_value_general<0)[0]
+            colors = np.ones((self.exp_graph_general.shape[0],3))
+            #colors[:,2] = 1 - seeds_nodes_graph[i].value/max_value
+            #colors[:,1] = 1 - seeds_nodes_graph[i].value/max_value
+            colors[ss,2] = 1
+            colors[ss,1] = 1
+
+            sss = np.where(self.exp_value_general>0)[0]
+            colors[sss,1] = 0
+            colors[sss,2] = 0
+
+        if len(self.exp_graph_general.shape) == 1:
+            point_actor = fvtk.point(self.exp_graph_general[None,:],colors, point_radius=0.3)
+        else:
+            point_actor = fvtk.point(self.exp_graph_general,colors, point_radius=0.3)
+        if show_node_general:
+            r.add(point_actor)
+
         for i in range(len(self.seeds_nodes_graph)):
             #print(i)
             #r.clear()
@@ -328,8 +398,8 @@ class ReinforcedTracking(object):
             #iren.GetRenderWindow().Render()
         if not show_final:
             window.show(r)
-        peak_slicer = actor.line(self.streamlines)
         if not len(self.streamlines) == 0:
+            peak_slicer = actor.line(self.streamlines)
             r.add(peak_slicer)
         if show_final:
             window.show(r)
@@ -358,13 +428,40 @@ class ReinforcedTracking(object):
                 self.graph = np.vstack((self.graph,self.seed))
                 self.value = np.append(self.value,0.0)
                 #node_onetrack = seed
+        """Alter
+        """
+        if len(self.exp_graph_alter.shape) == 1:
+            norm_alter = norm(self.exp_graph_alter-self.seed)
+            if norm_alter.min() < self.resolution:
+                index_alter = np.argmin(norm_alter)
+            else:
+                index_alter = self.exp_graph_alter.shape[0]
+                self.exp_graph_alter = np.vstack((self.exp_graph_alter,self.seed))
+                self.exp_value_alter = np.append(self.exp_value_alter,0.0)
+                self.exp_direc_alter = np.vstack((self.exp_direc_alter,np.array([0,0,0])))
+        if len(self.exp_graph_alter.shape) != 1:
+            norm_alter = norm(self.exp_graph_alter-self.seed,axis=1,ord=2)
+            if norm_alter.min() < self.resolution:
+                index_alter = np.argmin(norm_alter)
+                node_onetrack_alter = self.exp_graph_alter[index_alter]
+            else:
+                index_alter = self.exp_graph_alter.shape[0]
+                self.exp_graph_alter = np.vstack((self.exp_graph_alter,self.seed))
+                self.exp_value_alter = np.append(self.exp_value_alter,0.0)
+                self.exp_direc_alter = np.vstack((self.exp_direc_alter,np.array([0,0,0])))
 
         seed_onetrack = Seed(self.seed, index_c)
         seed_onetrack.track1 = np.append(seed_onetrack.track1, index_c)
+        """Alter
+        """
+        seed_onetrack_alter = Seed(self.seed, index_alter)
+        seed_onetrack_alter.track1 = np.append(seed_onetrack_alter.track1, index_alter)
+        """
         if len(self.graph.shape) == 1:
             seed_onetrack.nodes1 = self.graph
         else:
             seed_onetrack.nodes1 = self.graph[index_c]
+        """
 
         def itp(track_point):
             t0 = int(np.round(track_point[0]))
@@ -372,96 +469,210 @@ class ReinforcedTracking(object):
             t2 = int(np.round(track_point[2]))
             return t0, t1, t2
 
-        t0,t1,t2 = itp(track_point)
+        t0_init,t1_init,t2_init = itp(track_point)
+        """
         if self.direc == True:
             dir_old = -self.direction_getter[t0, t1, t2, 0,:]
         if self.direc == False:
             dir_old = self.direction_getter[t0, t1, t2, 0,:]
-        while(self.tissue_classifier[t0,t1,t2] != 0 ):
-            decision1 = 0
-            decision2 = 0
-            value_single = -500
-            t0, t1, t2 = itp(track_point)
-            dir_sub = self.direction_getter[t0, t1, t2, 0,:]
-            #dir_final = self.direction_getter[t0,t1,t2,0,:]
-            if dir_sub.all() == False:
-                t0, t1, t2 = check_direction(dirs,t0,t1,t2)
-            if t0 == -1 and t1 == -1 and t2 == -1:
-                break
-            """First direction
-            """
-            for i in range(5):
-                dir_sub = self.direction_getter[t0, t1, t2, i,:]
-                if dir_sub.all() == True:
-                    if np.dot(dir_old,dir_sub)<self.angles:
-                            #dir_sub = -dir_sub
-                        continue
-                    value_single_test = self.find_track_point(dir_sub, track_point)
-                    #if value_single_test < self.reward_negative/25:
-                    #    continue
-                    decision1 = 1
-                    if value_single_test > value_single:
-                        index_inside = i
-                        value_single = value_single_test
-                        dir_final = dir_sub
-            """
-            second direction
-            """
-            for i in range(5):
-                dir_sub = -self.direction_getter[t0, t1, t2, i,:]
-                if dir_sub.all() == True:
-                    if np.dot(dir_old,dir_sub)<self.angles:
-                            #dir_sub = -dir_sub
-                        continue
-                    value_single_test = self.find_track_point(dir_sub, track_point)
-                    #if value_single_test < self.reward_negative/25:
-                    #    continue
-                    decision2 = 1
-                    if value_single_test > value_single:
-                        index_inside = i
-                        value_single = value_single_test
-                        dir_final = dir_sub
-
-            if decision1 == 0 and decision2 == 0:
-                break
-            dir_old = dir_final
-            track_point = track_point + self.step_size * dir_final
-            if len(self.graph.shape) == 1:
-                norm2 = norm(self.graph-track_point)
+        """
+        """First initial start direction
+        """
+        for kk in range(2):
+            if kk%2 == 0:
+                dir_old = self.direction_getter[t0_init, t1_init, t2_init,0,:]#,int(kk/2) ,:]
             else:
-                norm2 = norm(self.graph-track_point,axis=1,ord=2)
-            if norm2.min() < self.resolution:
-                index_t = np.argmin(norm2)
-                if not np.any(seed_onetrack.track1 == index_t):
-                    seed_onetrack.track1 = np.append(seed_onetrack.track1,index_t)
+                dir_old = -self.direction_getter[t0_init, t1_init, t2_init,0,:]# int(np.floor(kk/2)),:]
+            t0 = t0_init
+            t1 = t1_init
+            t2 = t2_init
+            while(self.tissue_classifier[t0,t1,t2] != 0 ):
+                decision1 = 0
+                decision2 = 0
+                value_single = -500
+                t0, t1, t2 = itp(track_point)
+                dir_sub = self.direction_getter[t0, t1, t2, 0,:]
+                #dir_final = self.direction_getter[t0,t1,t2,0,:]
+                if dir_sub.all() == False:
+                    t0, t1, t2 = self.check_direction(t0,t1,t2)
+                if t0 == -1 and t1 == -1 and t2 == -1:
+                    break
+                """First direction
+                """
+                for i in range(5):
+                    dir_sub = self.direction_getter[t0, t1, t2, i,:]
+                    if dir_sub.all() == True:
+                        if np.dot(dir_old,dir_sub)<self.angles:
+                                #dir_sub = -dir_sub
+                            continue
+                        value_single_test = self.find_track_point(dir_sub, track_point)
+                        #if value_single_test < self.reward_negative/25:
+                        #    continue
+                        decision1 = 1
+                        if value_single_test > value_single:
+                            index_inside = i
+                            value_single = value_single_test
+                            dir_final = dir_sub
+                        """Alter
+
+                        value_single_test_alter = self.find_track_point_general(dir_sub, track_point)
+                        if value_single_test_alter > 0:
+                            if value_single_test < 0:
+                                continue
+                            index_inside = i
+                            value_single = value_single_test
+                            dir_final = dir_sub
+                        """
+                """
+                second direction
+                """
+                for i in range(5):
+                    dir_sub = -self.direction_getter[t0, t1, t2, i,:]
+                    if dir_sub.all() == True:
+                        if np.dot(dir_old,dir_sub)<self.angles:
+                                #dir_sub = -dir_sub
+                            continue
+                        value_single_test = self.find_track_point(dir_sub, track_point)
+                        #if value_single_test < self.reward_negative/25:
+                        #    continue
+                        decision2 = 1
+                        if value_single_test > value_single:
+                            index_inside = i
+                            value_single = value_single_test
+                            dir_final = dir_sub
+                        """Alter
+
+                        value_single_test_alter = self.find_track_point_general(dir_sub, track_point)
+                        if value_single_test_alter > value_single:
+                            if value_single_test < 0:
+                                continue
+                            index_inside = i
+                            value_single = value_single_test_alter
+                            dir_final = dir_sub
+                        """
+
+                dir_learned = self.find_track_point_general(track_point)
+                if np.any(dir_learned):
+                    if np.dot(dir_final,dir_learned) > self.angles:
+                        #print("im in corporating dir")
+                        dir_final = (0.3*dir_learned+0.3*dir_old+0.7*dir_final)/norm(0.3*dir_learned+0.3*dir_old+0.7*dir_final)
+
+
+                if decision1 == 0 and decision2 == 0:
+                    break
+
+                #dir_old = dir_final
+                #track_point = track_point + self.step_size * dir_final
+                """Adding computing direction
+                """
+                if len(self.exp_graph_alter.shape) == 1:
+                    norm_final = norm(self.exp_graph_alter-track_point)
+                else:
+                    norm_final = norm(self.exp_graph_alter-track_point,axis=1,ord=2)
+                if norm_final.min() < self.resolution_exp:
+                    """
+                    if np.sum(norm_final < self.resolution) < self.exp_range:
+                        index_tt = np.argmin(norm_final)
+                        node_near = self.exp_graph_alter[index_tt]
+                        dir_tt = self.exp_direc_alter[index_tt]
+                        if not norm(node_near-track_point) == 0:
+                            dir_t = (node_near-track_point)/norm(node_near-track_point)
+                            if np.dot(dir_old,dir_t)>self.angles:
+                                #print("im here inference")
+                                if np.dot(dir_old,dir_tt)<0:
+                                    dir_final = (0.2*dir_old+0.2*dir_final+dir_t-0.1*dir_tt)/norm(0.2*dir_old+0.2*dir_final+dir_t-0.1*dir_tt)
+                                else:
+                                    dir_final = (0.2*dir_old+0.2*dir_final+dir_t+0.1*dir_tt)/norm(0.2*dir_old+0.2*dir_final+dir_t+0.1*dir_tt)
+                    """
+                    if np.sum(norm_final < self.resolution) > self.exp_range or np.sum(norm_final < self.resolution) == self.exp_range:
+                        #print("im here")
+                        index_tt = np.argmin(norm_final)
+                        #index_tt = np.where(norm_final<self.resolution)
+                        node_near = self.exp_graph_alter[index_tt]
+                        dir_t = self.exp_direc_alter[index_tt]
+                        #dir_t = np.sum(self.exp_direc_alter[index_tt],axis=0)/norm(self.exp_direc_alter[index_tt],axis=0)
+                        if np.any(dir_t) and np.dot(dir_old,dir_t)>self.angles:
+                            print("im here")
+                            dir_final = (0.3*dir_old+dir_final+0.5*dir_t)/norm(0.3*dir_old+dir_final+0.5*dir_t)
+                        if np.any(dir_t) and np.dot(dir_old,dir_t)<0:
+                            print("im here")
+                            dir_final = (0.3*dir_old+dir_final-0.5*dir_t)/norm(0.3*dir_old+dir_final-0.5*dir_t)
+                        """
+                        if not np.any(dir_t):
+                            index_tt = np.argmin(norm_final)
+                            node_near = self.exp_graph_alter[index_tt]
+                            dir_tt = self.exp_direc_alter[index_tt]
+                            if not norm(node_near-track_point) == 0:
+                                dir_t = (node_near-track_point)/norm(node_near-track_point)
+                                if np.dot(dir_old,dir_t)>self.angles:
+                                    #print("im here inference")
+                                    if np.dot(dir_old,dir_tt)<0:
+                                        dir_final = (0.2*dir_old+0.2*dir_final+dir_t-0.1*dir_tt)/norm(0.2*dir_old+0.2*dir_final+dir_t-0.1*dir_tt)
+                                    else:
+                                        dir_final = (0.2*dir_old+0.2*dir_final+dir_t+0.1*dir_tt)/norm(0.2*dir_old+0.2*dir_final+dir_t+0.1*dir_tt)
+
+                        """
+                dir_old = dir_final
+                track_point = track_point + self.step_size * dir_final
+
+                if len(self.graph.shape) == 1:
+                    norm2 = norm(self.graph-track_point)
+                else:
+                    norm2 = norm(self.graph-track_point,axis=1,ord=2)
+                """Alter
+                """
+                if len(self.exp_graph_alter.shape) == 1:
+                    norm_alter = norm(self.exp_graph_alter-track_point)
+                else:
+                    norm_alter = norm(self.exp_graph_alter-track_point,axis=1,ord=2)
+
+                if norm2.min() < self.resolution:
+                    index_t = np.argmin(norm2)
+                    if not np.any(seed_onetrack.track1 == index_t):
+                        seed_onetrack.track1 = np.append(seed_onetrack.track1,index_t)
+                        if len(self.graph.shape) == 1:
+                            seed_onetrack.nodes1 = np.vstack((seed_onetrack.nodes1, self.graph))
+                        else:
+                            seed_onetrack.nodes1 = np.vstack((seed_onetrack.nodes1, self.graph[int(index_t)]))
+                else:
+                    if len(self.graph.shape) == 1:
+                        index_t = 1
+                    else:
+                        index_t = self.graph.shape[0]
+                    self.graph = np.vstack((self.graph,track_point))
+                    self.value = np.append(self.value,0.0)
+                    seed_onetrack.track1 = np.append(seed_onetrack.track1, index_t)
                     if len(self.graph.shape) == 1:
                         seed_onetrack.nodes1 = np.vstack((seed_onetrack.nodes1, self.graph))
                     else:
                         seed_onetrack.nodes1 = np.vstack((seed_onetrack.nodes1, self.graph[int(index_t)]))
-                    decision1 = 0
-            else:
-                if len(self.graph.shape) == 1:
-                    index_t = 1
-                else:
-                    index_t = self.graph.shape[0]
-                self.graph = np.vstack((self.graph,track_point))
-                self.value = np.append(self.value,0.0)
-                seed_onetrack.track1 = np.append(seed_onetrack.track1, index_t)
-                if len(self.graph.shape) == 1:
-                    seed_onetrack.nodes1 = np.vstack((seed_onetrack.nodes1, self.graph))
-                else:
-                    seed_onetrack.nodes1 = np.vstack((seed_onetrack.nodes1, self.graph[int(index_t)]))
-            streamline = np.vstack((streamline,track_point))
-            t0, t1, t2 = itp(track_point)
 
-            if t0 > self.shape0 or t0 == self.shape0:
-                t0 = self.shape0 - 1
-            if t1 > self.shape1 or t1 == self.shape1:
-                t1 = self.shape1 - 1
-            if t2 > self.shape2 or t2 == self.shape2:
-                t2 = self.shape2 - 1
+                """Alter
+                """
+                if norm_alter.min() < self.resolution:
+                    index_alter = np.argmin(norm_alter)
+                    if not np.any(seed_onetrack_alter.track1 == index_alter):
+                        seed_onetrack_alter.track1 = np.append(seed_onetrack_alter.track1,index_alter)
+                else:
+                    if len(self.exp_graph_alter.shape) == 1:
+                        index_alter = 1
+                    else:
+                        index_alter = self.exp_graph_alter.shape[0]
+                    self.exp_direc_alter = np.vstack((self.exp_direc_alter,dir_final))
+                    self.exp_graph_alter = np.vstack((self.exp_graph_alter,track_point))
+                    self.exp_value_alter = np.append(self.exp_value_alter,0.0)
+                    seed_onetrack_alter.track1 = np.append(seed_onetrack_alter.track1, index_alter)
+                streamline = np.vstack((streamline,track_point))
+                t0, t1, t2 = itp(track_point)
 
-            dir_sub = self.direction_getter[t0, t1, t2, 0,:]
+                if t0 > self.shape0 or t0 == self.shape0:
+                    t0 = self.shape0 - 1
+                if t1 > self.shape1 or t1 == self.shape1:
+                    t1 = self.shape1 - 1
+                if t2 > self.shape2 or t2 == self.shape2:
+                    t2 = self.shape2 - 1
+
+                #dir_sub = self.direction_getter[t0, t1, t2, 0,:]
             #if dir_sub.all() == False:
             #    t0, t1, t2 = self.check_direction(t0,t1,t2)
         """
@@ -482,11 +693,20 @@ class ReinforcedTracking(object):
                     break
             if decision == 0:
                 self.positive=False
-            if seed_onetrack.track1.shape[0] > self.maxlen:
-            #if streamline.shape[0] > self.maxlen:
+            #if seed_onetrack.track1.shape[0] > self.maxlen:
+            if streamline.shape[0] > self.maxlen:
                 self.positive = False
             if self.positive == True:
                 self.streamlines.append(streamline)
+                self.td_learning_general(seed_onetrack_alter.track1)
+                self.exp_graph_general = self.exp_graph_alter
+                self.exp_value_general = self.exp_value_alter
+                self.exp_direc_general = self.exp_direc_alter
+                self.indexs = np.append(self.indexs,self.index)
+            else:
+                self.exp_graph_alter = self.exp_graph_general
+                self.exp_value_alter = self.exp_value_general
+                self.exp_direc_alter = self.exp_direc_general
             self.td_learning(seed_onetrack.track1)
         return streamline, seed_onetrack
 
@@ -536,6 +756,8 @@ class ReinforcedTracking(object):
         else:
             for i in range(self.start_points.shape[0]):
                 self.seeds = []
+                self.index = i
+                print(i)
                 #self.goal_point = self.goal_points[i]
                 self.seeds.append(self.start_points[i])
                 index =  np.argmin(norm(self.n-self.start_points[i],axis=1,ord=2))
@@ -569,6 +791,9 @@ class ReinforcedTracking(object):
                         streamlines_onetrack, seed_onetrack = self.return_streamline()
                         one_seed_node_graph = Seed_node_graph(self.graph, self.value)
                         self.seeds_nodes_graph.append(one_seed_node_graph)
+
+        self.start_points = np.delete(self.start_points,self.indexs,axis=0)
+        self.indexs = []
 
                 #if decision1 == 1:
                 #if not streamlines_onetrack == []:
@@ -636,6 +861,7 @@ def show_mosaic(data):
         i, j, k = obj.picker.GetPointIJK()
         result_position.message = '({}, {}, {})'.format(str(i), str(j), str(k))
         result_value.message = '%.8f' % data[i, j, k]
+
 
 
     cnt = 0
